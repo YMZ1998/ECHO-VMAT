@@ -14,7 +14,23 @@ from copy import deepcopy
 import pandas as pd
 import sys
 import json
+import cvxpy as cp
 
+# pp.download_portpy_data(
+#     ["Lung_Phantom_Patient_1"],
+#     out="./data", # output directory
+#     beam_mode="all", # options: "all" or "planner" or beam ids list e.g., [0,10,20]. Default is "planner"
+# )
+
+
+def get_available_solver(preferred_solvers=None):
+    if preferred_solvers is None:
+        preferred_solvers = ['MOSEK', 'OSQP', 'ECOS', 'SCS', 'CLARABEL']
+    installed = set(cp.installed_solvers())
+    for solver_name in preferred_solvers:
+        if solver_name in installed:
+            return solver_name
+    raise ValueError(f'No supported solver found. Installed solvers: {sorted(installed)}')
 
 def echo_vmat_portpy():
     """
@@ -25,7 +41,7 @@ def echo_vmat_portpy():
     """
 
     tic_all = time.time()
-    data_dir = r'../../PortPy/data'
+    data_dir = r'./data/data'
     data = pp.DataExplorer(data_dir=data_dir)
     data.patient_id = 'Lung_Phantom_Patient_1'
 
@@ -37,6 +53,8 @@ def echo_vmat_portpy():
 
     filename = os.path.join(config_path, protocol_name + '_clinical_criteria.json')
     clinical_criteria = pp.ClinicalCriteria(file_name=filename)
+    solver_name = get_available_solver()
+    print('Using solver:', solver_name)
 
     if "flag_full_matrix" in vmat_opt_params['opt_parameters']:
         flag_full_matrix = vmat_opt_params['opt_parameters']['flag_full_matrix']
@@ -115,7 +133,16 @@ def echo_vmat_portpy():
                                               opt_params=vmat_opt_params,
                                               step_num=1)
 
-        sol_col_gen = vmat_opt.run_col_gen_algo(solver='MOSEK', verbose=True, accept_unknown=True)
+        # sol_col_gen = vmat_opt.run_col_gen_algo(solver=solver_name, verbose=True)
+        sol_col_gen = pp.load_optimal_sol(
+            sol_name='sol_col_gen',
+            path=r'./Temp'
+        )
+        if 'arcs' in sol_col_gen:
+            arcs.arcs_dict['arcs'] = deepcopy(sol_col_gen['arcs'])
+        else:
+            # Fallback for older saved col-gen files that only contain intensities.
+            arcs.get_initial_leaf_pos(initial_leaf_pos='BEV')
         dose_1d = inf_matrix.A @ sol_col_gen['optimal_intensity'] * my_plan.get_num_of_fractions()
         # # plot dvh for the above structures
         fig, ax = plt.subplots(figsize=(12, 8))
@@ -124,9 +151,9 @@ def echo_vmat_portpy():
         ax = pp.Visualization.plot_dvh(my_plan, dose_1d=dose_1d,
                                        struct_names=struct_names, ax=ax)
         ax.set_title('Initial Col gen dvh')
-        plt.show(block=False)
-        plt.close('all')
-        # pp.save_optimal_sol(sol=sol_col_gen, sol_name='sol_col_gen', path=r'C:\Temp')
+        # plt.show()
+        # plt.close('all')
+        pp.save_optimal_sol(sol=sol_col_gen, sol_name='sol_col_gen', path=r'./Temp')
 
         end_col_gen = time.time()
         print('***************time to generate initial leaf positions = ', end_col_gen - start_col_gen, 'seconds *****************')
@@ -141,7 +168,7 @@ def echo_vmat_portpy():
     final_convergence = []
     # Run step 0 for dvh optimization
     if not clinical_criteria.dvh_table.empty:
-        sol_convergence = vmat_opt.run_sequential_cvx_algo(solver='MOSEK', verbose=True)
+        sol_convergence = vmat_opt.run_sequential_cvx_algo(solver=solver_name, verbose=True)
         final_convergence.extend(sol_convergence)
         sol = sol_convergence[vmat_opt.best_iteration]
         solutions.append(sol)
@@ -155,7 +182,7 @@ def echo_vmat_portpy():
             clinical_criteria.get_low_dose_vox_ind(my_plan, dose=dose)  # get low dose voxels and update dvh table
         vmat_opt.set_step_num(i + 1)
         # running scp algorithm
-        sol_convergence = vmat_opt.run_sequential_cvx_algo(solver='MOSEK', verbose=True)
+        sol_convergence = vmat_opt.run_sequential_cvx_algo(solver=solver_name, verbose=True)
         final_convergence.extend(sol_convergence)
         sol = final_convergence[vmat_opt.best_iteration]
         solutions.append(sol)
@@ -186,10 +213,10 @@ def echo_vmat_portpy():
             sol_name = f'sol_step{i + 1}.pkl'
         else:
             sol_name = f'sol_step{i}.pkl'
-        pp.save_optimal_sol(sol=solutions[i], sol_name=sol_name, path=os.path.join('C', 'Temp', data.patient_id))
+        pp.save_optimal_sol(sol=solutions[i], sol_name=sol_name, path=os.path.join( 'Temp', data.patient_id))
 
     print('saving my_plan..')
-    pp.save_plan(my_plan, 'my_plan.pkl', path=os.path.join('C', 'Temp', data.patient_id))
+    pp.save_plan(my_plan, 'my_plan.pkl', path=os.path.join('Temp', data.patient_id))
 
     # update done
     opt_time = round(time.time() - tic_all, 2)

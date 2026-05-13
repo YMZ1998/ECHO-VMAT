@@ -58,6 +58,25 @@ class EchoVmatOptimization(Optimization):
         self.inf_bound_l = None
         self.inf_bound_r = None
 
+    @staticmethod
+    def _serialize_solver_stats(solver_stats):
+        if solver_stats is None:
+            return None
+        stats = {
+            'solver_name': getattr(solver_stats, 'solver_name', None),
+            'setup_time': getattr(solver_stats, 'setup_time', None),
+            'solve_time': getattr(solver_stats, 'solve_time', None),
+            'num_iters': getattr(solver_stats, 'num_iters', None),
+        }
+        extra_stats = getattr(solver_stats, 'extra_stats', None)
+        if extra_stats is not None:
+            try:
+                deepcopy(extra_stats)
+                stats['extra_stats'] = extra_stats
+            except Exception:
+                stats['extra_stats'] = str(extra_stats)
+        return stats
+
     def set_step_num(self, step_num):
         self.step_num = step_num
         # update opt params
@@ -1715,12 +1734,12 @@ class EchoVmatOptimization(Optimization):
                 if key in ['leaf_pos_mu_l', 'leaf_pos_mu_r', 'int_v', 'bound_v_l', 'bound_v_r']:
                     sol[key] = np.round(value.value, 6)
             # sol['time_seconds'] = np.round(elapsed)
-            sol['solver_stats'] = deepcopy(problem.solver_stats)
+            sol['solver_stats'] = self._serialize_solver_stats(problem.solver_stats)
         else:
             sol['beam_mu'] = np.round(self.vars['beam_mu'].value, 6)
             sol['actual_obj_value'] = np.round(problem.value, 4)
         sol['time_seconds'] = np.round(elapsed)
-        sol['solver_stats'] = deepcopy(problem.solver_stats)
+        sol['solver_stats'] = self._serialize_solver_stats(problem.solver_stats)
 
         if return_cvxpy_prob:
             return sol, problem

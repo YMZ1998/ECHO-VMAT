@@ -228,6 +228,7 @@ class Arcs:
                 bound_ind_l = []
                 bound_ind_r = []
                 int_ind = []
+                # print(vmat[b].keys())
 
                 num_rows = vmat[b]['num_rows']
                 num_cols = vmat[b]['num_cols']
