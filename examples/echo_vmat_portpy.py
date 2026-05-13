@@ -3,18 +3,18 @@
 """
 import os.path
 import time
+from copy import deepcopy
+
+import cvxpy as cp
+import matplotlib.pyplot as plt
 import numpy as np
 import portpy.photon as pp
+
+from echo_vmat.arcs import Arcs
 from echo_vmat.echo_vmat_optimization import EchoVmatOptimization
 from echo_vmat.echo_vmat_optimization_col_gen import EchoVmatOptimizationColGen
 from echo_vmat.utils.get_sparse_only import get_sparse_only
-import matplotlib.pyplot as plt
-from echo_vmat.arcs import Arcs
-from copy import deepcopy
-import pandas as pd
-import sys
-import json
-import cvxpy as cp
+
 
 # pp.download_portpy_data(
 #     ["Lung_Phantom_Patient_1"],
@@ -31,6 +31,7 @@ def get_available_solver(preferred_solvers=None):
         if solver_name in installed:
             return solver_name
     raise ValueError(f'No supported solver found. Installed solvers: {sorted(installed)}')
+
 
 def echo_vmat_portpy():
     """
@@ -94,7 +95,8 @@ def echo_vmat_portpy():
             threshold_perc = vmat_opt_params['opt_parameters']['threshold_perc']
         else:
             threshold_perc = 5
-        if "sparsification" in vmat_opt_params['opt_parameters']: # Default is RMR sparsification for more accurate results. It can be changed to Naive
+        if "sparsification" in vmat_opt_params[
+            'opt_parameters']:  # Default is RMR sparsification for more accurate results. It can be changed to Naive
             sparsification = vmat_opt_params['opt_parameters']['sparsification']
         else:
             sparsification = 'Naive'
@@ -146,7 +148,8 @@ def echo_vmat_portpy():
         dose_1d = inf_matrix.A @ sol_col_gen['optimal_intensity'] * my_plan.get_num_of_fractions()
         # # plot dvh for the above structures
         fig, ax = plt.subplots(figsize=(12, 8))
-        struct_names = ['PTV', 'ESOPHAGUS', 'HEART', 'CORD', 'RIND_0', 'RIND_1', 'LUNGS_NOT_GTV', 'RECT_WALL', 'BLAD_WALL',
+        struct_names = ['PTV', 'ESOPHAGUS', 'HEART', 'CORD', 'RIND_0', 'RIND_1', 'LUNGS_NOT_GTV', 'RECT_WALL',
+                        'BLAD_WALL',
                         'URETHRA']
         ax = pp.Visualization.plot_dvh(my_plan, dose_1d=dose_1d,
                                        struct_names=struct_names, ax=ax)
@@ -156,7 +159,8 @@ def echo_vmat_portpy():
         pp.save_optimal_sol(sol=sol_col_gen, sol_name='sol_col_gen', path=r'./Temp')
 
         end_col_gen = time.time()
-        print('***************time to generate initial leaf positions = ', end_col_gen - start_col_gen, 'seconds *****************')
+        print('***************time to generate initial leaf positions = ', end_col_gen - start_col_gen,
+              'seconds *****************')
 
     # check if there are dvh constraints and run step 0
     clinical_criteria.get_dvh_table(my_plan=my_plan, opt_params=vmat_opt_params['steps']['2'])
@@ -169,6 +173,10 @@ def echo_vmat_portpy():
     # Run step 0 for dvh optimization
     if not clinical_criteria.dvh_table.empty:
         sol_convergence = vmat_opt.run_sequential_cvx_algo(solver=solver_name, verbose=True)
+        # sol_convergence = pp.load_optimal_sol(
+        #     sol_name='sol_step0.pkl',
+        #     path=os.path.join('Temp', data.patient_id)
+        # )
         final_convergence.extend(sol_convergence)
         sol = sol_convergence[vmat_opt.best_iteration]
         solutions.append(sol)
@@ -183,6 +191,10 @@ def echo_vmat_portpy():
         vmat_opt.set_step_num(i + 1)
         # running scp algorithm
         sol_convergence = vmat_opt.run_sequential_cvx_algo(solver=solver_name, verbose=True)
+        # sol_convergence = pp.load_optimal_sol(
+        #     sol_name='sol_step{}.pkl'.format(i + 1),
+        #     path=os.path.join('Temp', data.patient_id)
+        # )
         final_convergence.extend(sol_convergence)
         sol = final_convergence[vmat_opt.best_iteration]
         solutions.append(sol)
@@ -192,7 +204,7 @@ def echo_vmat_portpy():
     # # plot dvh for the above structures
     fig, ax = plt.subplots(figsize=(12, 8))
     struct_names = ['PTV', 'ESOPHAGUS', 'HEART', 'CORD', 'RIND_0', 'RIND_1', 'LUNGS_NOT_GTV', 'RECT_WALL', 'BLAD_WALL',
-                    'URETHRA','LUNG_L', 'LUNG_R']
+                    'URETHRA', 'LUNG_L', 'LUNG_R']
     title = []
     style = ['-', '--', ':']
     for i in range(len(solutions)):
@@ -204,8 +216,8 @@ def echo_vmat_portpy():
         else:
             title.append(f'Step {i} {style[i]}')
     ax.set_title(" ".join(title))
-    plt.show(block=False)
-    plt.close('all')
+    plt.show()
+    # plt.close('all')
 
     print('saving optimal solution..')
     for i in range(len(solutions)):
@@ -213,7 +225,7 @@ def echo_vmat_portpy():
             sol_name = f'sol_step{i + 1}.pkl'
         else:
             sol_name = f'sol_step{i}.pkl'
-        pp.save_optimal_sol(sol=solutions[i], sol_name=sol_name, path=os.path.join( 'Temp', data.patient_id))
+        pp.save_optimal_sol(sol=solutions[i], sol_name=sol_name, path=os.path.join('Temp', data.patient_id))
 
     print('saving my_plan..')
     pp.save_plan(my_plan, 'my_plan.pkl', path=os.path.join('Temp', data.patient_id))
