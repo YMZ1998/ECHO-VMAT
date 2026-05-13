@@ -1,4 +1,3 @@
-import argparse
 import os
 from copy import deepcopy
 
@@ -8,6 +7,14 @@ import portpy.photon as pp
 
 from echo_vmat.arcs import Arcs
 from echo_vmat.utils.get_sparse_only import get_sparse_only
+
+
+# Default settings. Edit these paths if your outputs are stored elsewhere.
+DATA_DIR = os.path.join(".", "data", "data")
+PATIENT_ID = "Lung_Phantom_Patient_1"
+PROTOCOL_NAME = "Lung_2Gy_30Fx"
+SOLUTION_DIR = os.path.join( "Temp", PATIENT_ID)
+PLOT_DVH = True
 
 
 def build_plan(
@@ -78,105 +85,132 @@ def build_plan(
         clinical_criteria=clinical_criteria,
         arcs=arcs,
     )
-    return my_plan, inf_matrix, clinical_criteria
+    return my_plan, inf_matrix
 
 
-def load_weights(sol_path: str = None, npy_path: str = None):
-    if sol_path:
-        sol_dir = os.path.dirname(sol_path) or "."
-        sol_name = os.path.basename(sol_path)
-        sol = pp.load_optimal_sol(sol_name=sol_name, path=sol_dir)
-        if "optimal_intensity" not in sol:
-            raise KeyError(f"'optimal_intensity' not found in solution file: {sol_path}")
-        return sol["optimal_intensity"], sol
-
-    if npy_path:
-        return np.load(npy_path), None
-
-    raise ValueError("Either sol_path or npy_path must be provided.")
+def load_solution(sol_path: str):
+    sol_dir = os.path.dirname(sol_path) or "."
+    sol_name = os.path.basename(sol_path)
+    sol = pp.load_optimal_sol(sol_name=sol_name, path=sol_dir)
+    if "optimal_intensity" not in sol:
+        raise KeyError(f"'optimal_intensity' not found in solution file: {sol_path}")
+    return sol
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Validate saved ECHO-VMAT weights or solution files in a PortPy/PYLINAC environment."
-    )
-    parser.add_argument(
-        "--data-dir",
-        default=os.path.join(".", "data", "data"),
-        help="PortPy data directory. Default: ./data/data",
-    )
-    parser.add_argument(
-        "--patient-id",
-        default="Lung_Phantom_Patient_1",
-        help="Patient id. Default: Lung_Phantom_Patient_1",
-    )
-    parser.add_argument(
-        "--protocol",
-        default="Lung_2Gy_30Fx",
-        help="Protocol/config prefix. Default: Lung_2Gy_30Fx",
-    )
-    parser.add_argument(
-        "--sol",
-        default="./Temp/sol_col_gen",
-        help="Path to a saved PortPy solution file, e.g. C:\\Temp\\Lung_Phantom_Patient_1\\sol_step2.pkl",
-    )
-    parser.add_argument(
-        "--weights",
-        default=None,
-    )
-    parser.add_argument(
-        "--no-plot",
-        default=False,
-        help="Skip DVH plotting.",
-    )
-    args = parser.parse_args()
-
-    if bool(args.sol) == bool(args.weights):
-        raise ValueError("Provide exactly one of --sol or --weights.")
-
-    my_plan, inf_matrix, clinical_criteria = build_plan(
-        data_dir=args.data_dir,
-        patient_id=args.patient_id,
-        protocol_name=args.protocol,
-    )
-
-    weights, sol = load_weights(sol_path=args.sol, npy_path=args.weights)
-
+def compute_dose(my_plan, inf_matrix, weights):
     if len(weights) != inf_matrix.A.shape[1]:
         raise ValueError(
             f"Weight length mismatch: got {len(weights)}, expected {inf_matrix.A.shape[1]}. "
             "Check patient, beams/arcs, and influence matrix settings."
         )
+    return inf_matrix.A @ weights * my_plan.get_num_of_fractions()
 
-    dose_1d = inf_matrix.A @ weights * my_plan.get_num_of_fractions()
 
-    print(f"Loaded weights length: {len(weights)}")
+def get_solution_files(sol_dir):
+    candidates = []
+    preferred_names = [
+        "sol_col_gen",
+        "sol_col_gen.pkl",
+        "sol_step0.pkl",
+        "sol_step1.pkl",
+        "sol_step2.pkl",
+    ]
+    for name in preferred_names:
+        path = os.path.join(sol_dir, name)
+        if os.path.exists(path):
+            candidates.append(path)
+
+    repo_temp_dir = os.path.join(os.path.dirname(__file__), "Temp")
+    for name in ["sol_col_gen", "sol_col_gen.pkl"]:
+        path = os.path.join(repo_temp_dir, name)
+        if os.path.exists(path):
+            abs_path = os.path.normcase(os.path.abspath(path))
+            if abs_path not in {
+                os.path.normcase(os.path.abspath(existing_path)) for existing_path in candidates
+            }:
+                candidates.append(path)
+
+    if os.path.isdir(sol_dir):
+        existing = {os.path.normcase(os.path.abspath(path)) for path in candidates}
+        for filename in sorted(os.listdir(sol_dir)):
+            if not filename.startswith("sol_step") or not filename.endswith(".pkl"):
+                continue
+            path = os.path.join(sol_dir, filename)
+            key = os.path.normcase(os.path.abspath(path))
+            if key not in existing:
+                candidates.append(path)
+                existing.add(key)
+    return candidates
+
+
+def summarize_solution(label, sol_path, sol, dose_1d, my_plan):
+    print("=" * 80)
+    print(f"Solution: {label}")
+    print(f"Path: {sol_path}")
+    print(f"Weight length: {len(sol['optimal_intensity'])}")
     print(f"Dose vector length: {len(dose_1d)}")
-    if sol is not None:
-        print(f"Loaded solution file: {args.sol}")
-    else:
-        print(f"Loaded weight file: {args.weights}")
+    if "act_dose_v" in sol:
+        saved_dose = sol["act_dose_v"] * my_plan.get_num_of_fractions()
+        max_abs_err = float(np.max(np.abs(saved_dose - dose_1d)))
+        mean_abs_err = float(np.mean(np.abs(saved_dose - dose_1d)))
+        print(f"Recomputed vs saved dose max abs diff: {max_abs_err:.6f}")
+        print(f"Recomputed vs saved dose mean abs diff: {mean_abs_err:.6f}")
 
-    pp.Evaluation.display_clinical_criteria(my_plan=my_plan, dose_1d=dose_1d)
 
-    if not args.no_plot:
-        struct_names = [
-            "PTV",
-            "ESOPHAGUS",
-            "HEART",
-            "CORD",
-            "LUNG_L",
-            "LUNG_R",
-            "LUNGS_NOT_GTV",
-        ]
-        fig, ax = plt.subplots(figsize=(12, 8))
-        pp.Visualization.plot_dvh(
-            my_plan=my_plan,
-            dose_1d=dose_1d,
-            struct_names=struct_names,
-            ax=ax,
+def main():
+    my_plan, inf_matrix = build_plan(
+        data_dir=DATA_DIR,
+        patient_id=PATIENT_ID,
+        protocol_name=PROTOCOL_NAME,
+    )
+
+    sol_paths = get_solution_files(SOLUTION_DIR)
+    if not sol_paths:
+        raise FileNotFoundError(
+            "No solution files found. "
+            f"Checked solution dir: {SOLUTION_DIR} and example temp dir: "
+            f"{os.path.join(os.path.dirname(__file__), 'Temp')}"
         )
-        ax.set_title("Saved Weight Verification DVH")
+
+    struct_names = [
+        "PTV",
+        "ESOPHAGUS",
+        "HEART",
+        "CORD",
+        "LUNG_L",
+        "LUNG_R",
+        "LUNGS_NOT_GTV",
+    ]
+    styles = ["-", "--", ":", "-."]
+    doses = []
+    labels = []
+
+    print(f"Using patient: {PATIENT_ID}")
+    print(f"Using data dir: {os.path.abspath(DATA_DIR)}")
+    print(f"Using solution dir: {os.path.abspath(SOLUTION_DIR)}")
+
+    for sol_path in sol_paths:
+        sol = load_solution(sol_path)
+        dose_1d = compute_dose(my_plan, inf_matrix, sol["optimal_intensity"])
+        label = os.path.basename(sol_path)
+        summarize_solution(label, sol_path, sol, dose_1d, my_plan)
+        print("Clinical criteria:")
+        pp.Evaluation.display_clinical_criteria(my_plan=my_plan, dose_1d=dose_1d)
+        doses.append(dose_1d)
+        labels.append(label)
+
+    if PLOT_DVH:
+        fig, ax = plt.subplots(figsize=(12, 8))
+        for index, dose_1d in enumerate(doses):
+            pp.Visualization.plot_dvh(
+                my_plan=my_plan,
+                dose_1d=dose_1d,
+                struct_names=struct_names,
+                style=styles[index % len(styles)],
+                ax=ax,
+            )
+        ax.set_title("ECHO-VMAT Solution Comparison DVH")
+        ax.legend(labels)
         plt.show()
 
 

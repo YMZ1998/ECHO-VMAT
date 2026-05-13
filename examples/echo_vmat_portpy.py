@@ -138,7 +138,7 @@ def echo_vmat_portpy():
         # sol_col_gen = vmat_opt.run_col_gen_algo(solver=solver_name, verbose=True)
         sol_col_gen = pp.load_optimal_sol(
             sol_name='sol_col_gen',
-            path=r'./Temp'
+            path=os.path.join('Temp', data.patient_id)
         )
         if 'arcs' in sol_col_gen:
             arcs.arcs_dict['arcs'] = deepcopy(sol_col_gen['arcs'])
